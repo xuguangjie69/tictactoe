@@ -2,11 +2,17 @@
 
 抬手即玩的三子连线小游戏，跑在 vivo 蓝河手表上。支持**同桌双人对弈**与**三档 AI 人机对战**。
 
+<p align="center">
+  <img src="docs/screenshots/menu.png" height="270" alt="主菜单 · 选择模式与难度" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/game.png" height="270" alt="人机对战 · 对局中" />
+</p>
+
 | 主菜单 · 模式选择 | 双人模式 · 对局 | 三连获胜 |
 |---|---|---|
 | ![菜单](tools/preview/1_menu.png) | ![双人对局](tools/preview/7_duo_game.png) | ![获胜](tools/preview/3_game_win.png) |
 
-> 上面是 `tools/preview.py` 依据 `index.ux` 真实尺寸生成的 466×466 预览图（与代码同源，改代码会同步重出），不是模拟器实拍。
+> 顶部两张是模拟器实拍。下面是 `tools/preview.py` 依据 `index.ux` 真实尺寸生成的 466×466 预览图（与代码同源，改代码会同步重出）。
 
 ## 玩法
 
@@ -48,6 +54,8 @@ src/
   pages/Index/index.ux       主界面（菜单 / 对局 / 结算 三态单页）
   systems/ai.js              棋局规则 + negamax AI（纯逻辑，零平台依赖）
   systems/store.js           战绩 / 模式持久化
+docs/
+  screenshots/               README 顶部截图（主菜单 / 人机对战对局）
 tools/
   smoke.mjs                  AI 逻辑断言
   duo_check.mjs              双人模式页面逻辑断言（无需模拟器）
