@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "moduleResolution": "node",
+    "allowJs": true
+  },
+  "include": ["src/**/*.js", "src/**/*.ux"]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "tictactoe",
+  "version": "1.0.0",
+  "description": "vivo 蓝河手表 · 井字棋",
+  "private": true,
+  "scripts": {
+    "smoke": "node tools/smoke.mjs",
+    "duo": "node tools/duo_check.mjs",
+    "lint": "node tools/lint_ux.mjs",
+    "neg": "node tools/neg_check.mjs && node tools/neg_lint.mjs",
+    "check": "node tools/smoke.mjs && node tools/duo_check.mjs && node tools/lint_ux.mjs"
+  },
+  "dependencies": {}
+}

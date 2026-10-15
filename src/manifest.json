@@ -1,0 +1,26 @@
+{
+  "package": "com.fboy.tictactoe",
+  "name": "井字棋",
+  "icon": "/assets/images/logo.png",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "deviceTypeList": ["watch", "watch-round", "watch-square"],
+  "appCategory": ["games"],
+  "config": {
+    "designWidth": 466
+  },
+  "display": {
+    "backgroundColor": "#0b1120"
+  },
+  "features": [
+    { "name": "blueos.storage.storage" }
+  ],
+  "router": {
+    "entry": "pages/Index",
+    "pages": {
+      "pages/Index": {
+        "component": "index"
+      }
+    }
+  }
+}

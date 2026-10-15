@@ -1,0 +1,20 @@
+<script>
+  import { loadSave } from './systems/store.js'
+
+  /**manifest**/
+  export default {
+    onCreate() {
+      // 应用入口：把存档读进模块单例。
+      // 注意 Feature API 只能在运行期调用，不能放进页面 data 的初始化里（预渲染阶段拿不到 API）。
+      try {
+        loadSave()
+        console.info('[井字棋] 应用创建')
+      } catch (e) {
+        console.info('[井字棋] 初始化跳过：' + e)
+      }
+    },
+    onDestroy() {
+      console.info('[井字棋] 应用销毁')
+    }
+  }
+</script>

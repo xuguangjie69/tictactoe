@@ -1,0 +1,579 @@
+<script>
+/**
+ * 井字棋 · 主界面（单页三态：菜单 / 对局 / 结算）
+ * ---------------------------------------------------------------
+ * 🔴 本文件经历过两次真机返工，下面每条「必须」都对应截图里真实看到的现象，
+ *    别再改回去：
+ *
+ * ① <style> 里必须有 `@tailwind components;` + `@tailwind utilities;`。
+ *    漏掉这两行 ⇒ w-[92px] / flex / items-center / rounded-* / mt-* 全部失效
+ *    ⇒ 所有元素塌成默认块级流，位置全乱。**这是第一次返工的直接原因。**
+ *
+ * ② 按钮用 `<input type="button" value="{{label}}">`。
+ *    ⚠️ 带 show 的 input，value 必须绑 {{xxxLabel}} 变量，不能写静态字符串。
+ *    ⚠️ 曾有一条错误结论「div 里的 <text> 真机不渲染」——已被 gudao 真机代码证伪
+ *       （Main/index.ux:123 就是 <div onclick> 内含 3 个 <text>，真机正常）。
+ *
+ * ③ 布局走 flex 流式（<scroll> + margin），**不要用 position:absolute 摆位**。
+ *    绝对定位在真机上不按 left/top 生效，实测全部塌回文档流。
+ *    同项目 gudao 13 个页面里只有 .bgfill 一个绝对定位层，其余全是 flex。
+ *
+ * ④ 显隐：`<scroll>` **一律不带 show/if**，改用外层 `<div if="{{bool}}">` 切换。
+ *    🔴 第三次真机返工的直接原因：编译期报 parseDomElement「parse json error: no type」。
+ *    依据（gudao 13 个真机跑通页面全量统计）：
+ *      · `if` 只出现在 `<div>` 上（15 处，可带子节点）；
+ *      · `<scroll>` 用 show/if 的地方 **0 处**；
+ *      · `show` 只出现在 `<text>` / `<input>` / `<image>` 等叶子元素上。
+ *    ⇒ `<scroll show>` / `<div show>` 都是越界写法，编译期直接报 no type。
+ *    容器显隐一律 `<div if>`；叶子元素显隐才用 `show`。
+ *
+ * ④-bis 🔴🔴 show 绑定的变量**必须是真正的 boolean**（true/false），
+ *    **绝对不能用 '' / '1' / 0 / 1 这类字符串或数字**！
+ *    实机现象（第二次返工）：data 里写 c0x: ''，show="{{c0x}}"，
+ *    结果 9 格棋子**全部显示成 X，一个 O 都没有**——平台把非空字符串都当真值，
+ *    空字符串也不例外。对照证据：gudao 13 个真机跑通页面里所有 show 变量
+ *    清一色是 boolean（showFight / noSaveShow / jiaShow …），没有一个用字符串。
+ *    同页面 menuShow/gameShow 用 boolean 就完全正常，进一步坐实这条。
+ *    本文件所有 c*x / c*o / c*w / ring* / mring* / isSolo / isDuo 一律 boolean，
+ *    赋值也一律用 === / true|false。
+ *
+ * ⑤ {{}} 里只能是简单变量名，不能出现三元/算术/表达式。
+ *
+ * ⑥ 页面根 .page 高度用 `style="height:{{pageH}}px"` 内联插值，
+ *    配 @media screen and (device: watch-square) 覆盖长方形屏。
+ *
+ * ⑦ text 上不放 position 相关 class（否则整个 style 块被丢弃）。
+ *
+ * ⑧ 配色一律自定义 class（.text-cyan / .bg-gold…），不依赖 tailwind 主题色，
+ *    免得主题没加载时颜色全丢（第一版就 reliant 在不存在的 bg-panel/bg-btn 上）。
+ *
+ * ⑨ 🆕 双人模式（mode=1）的三条约定：
+ *    · 模式选择**完全复刻难度选择**的已验证结构
+ *      （.col-mode 里 <input> + 一个空的 .ring-mode 走 if），不发明新写法；
+ *    · 「难度区」与「双人说明区」用 `<div if="{{isSolo}}">` / `<div if="{{isDuo}}">`
+ *      互斥切换——**不能用 show**（见 ④，div+show 编译期报 no type）；
+ *    · 棋子身份沿用 ai.js 的 HUMAN=1(X) / AI=2(O)。双人模式下这两个常量
+ *      只表示「先手方 / 后手方」，不表示「人 / 电脑」；轮流靠 this.turn = 3 - this.turn
+ *      在两个常量间翻转，**不要**在双人模式里调用 aiPick。
+ */
+import {
+  newBoard, play, winnerOf, winLineOf, isFull, aiPick, HUMAN, AI
+} from '../../systems/ai'
+import { getSave, setLevel, setMode, record } from '../../systems/store'
+
+const LEVEL_NAME = ['简单', '普通', '困难']
+
+export default {
+  data: {
+    pageH: 466,
+    menuShow: true,
+    gameShow: false,
+    overShow: false,
+
+    // 模式：0=人机对战 1=双人模式（同桌轮流落子）。三个 boolean 驱动显隐与选中环。
+    mring0: true,   // 人机对战 选中环
+    mring1: false,  // 双人模式 选中环
+    isSolo: true,   // 人机 ⇒ 显示难度区
+    isDuo: false,   // 双人 ⇒ 显示双人说
+
+    // 难度选中态（三个独立 boolean 变量，show 切金环）
+    ring0: false, ring1: true, ring2: false,
+
+    // 按钮文案
+    bStartLabel: '开始对局',
+    bAgainLabel: '再来一局',
+    bBackLabel: '换个难度',
+    bRetryLabel: '重开',
+    bMenuLabel: '换难度',
+
+    statText: '尚无对局记录',
+    statusText: '你执 X 先手',
+    turnText: '你的回合',
+    overTitle: '',
+    overSub: '',
+
+    // 棋盘 9 格显隐：**必须是 boolean**，不能用 ''/'1' 字符串
+    c0x: false, c0o: false, c0w: false,
+    c1x: false, c1o: false, c1w: false,
+    c2x: false, c2o: false, c2w: false,
+    c3x: false, c3o: false, c3w: false,
+    c4x: false, c4o: false, c4w: false,
+    c5x: false, c5o: false, c5w: false,
+    c6x: false, c6o: false, c6w: false,
+    c7x: false, c7o: false, c7w: false,
+    c8x: false, c8o: false, c8w: false
+  },
+
+  onInit() {
+    // board / level / mode / turn 只放实例上，不进 data（避免渲染路径出现数组对象）
+    this.board = newBoard()
+    this.level = 1
+    this.mode = 0
+    this.turn = HUMAN
+    this.busy = false
+    try {
+      const s = getSave()
+      this.level = s.level
+      this.mode = s.mode
+    } catch (e) {
+      this.level = 1
+      this.mode = 0
+    }
+    this.syncModeUi()
+    this.syncLevelUi()
+    this.syncStatUi()
+  },
+
+  /* ---------------- 菜单 ---------------- */
+
+  onPickMode0() { this.setModeTo(0) },
+  onPickMode1() { this.setModeTo(1) },
+
+  /**
+   * 切换模式。
+   * ⚠️ syncStatUi() 不能省：战绩行在双人/人机下文案不同
+   *    （双人写「不计战绩」，人机写真实战绩），只调 syncModeUi() 的话，
+   *    从双人切回人机时菜单会一直挂着上一句的「双人模式不计战绩」。
+   *    （这条是 duo_check.mjs [8] 抓出来的，别删。）
+   */
+  setModeTo(m) {
+    this.mode = m
+    try { setMode(m) } catch (e) {}
+    this.syncModeUi()
+    this.syncStatUi()
+  },
+
+  syncModeUi() {
+    this.mring0 = this.mode === 0
+    this.mring1 = this.mode === 1
+    this.isSolo = this.mode === 0
+    this.isDuo = this.mode === 1
+  },
+
+  onPick0() { this.setLevelTo(0) },
+  onPick1() { this.setLevelTo(1) },
+  onPick2() { this.setLevelTo(2) },
+
+  setLevelTo(n) {
+    this.level = n
+    try { setLevel(n) } catch (e) {}
+    this.syncLevelUi()
+  },
+
+  syncLevelUi() {
+    this.ring0 = this.level === 0
+    this.ring1 = this.level === 1
+    this.ring2 = this.level === 2
+  },
+
+  syncStatUi() {
+    let s = null
+    try { s = getSave() } catch (e) { s = null }
+    if (this.isDuo) {
+      // 双人模式不累计战绩，这里说明一下，免得用户以为战绩丢了
+      this.statText = '双人模式不计战绩'
+      return
+    }
+    if (!s || (!s.win && !s.lose && !s.draw)) {
+      this.statText = '尚无对局记录'
+    } else {
+      this.statText = '战绩 ' + s.win + '胜 ' + s.lose + '负 ' + s.draw + '平'
+    }
+  },
+
+  onStart() {
+    this.menuShow = false
+    this.gameShow = true
+    this.overShow = false
+    this.newRound()
+  },
+
+  onBack() {
+    this.gameShow = false
+    this.overShow = false
+    this.menuShow = true
+    this.syncStatUi()
+  },
+
+  /* ---------------- 对局 ---------------- */
+
+  newRound() {
+    this.board = newBoard()
+    this.busy = false
+    this.overShow = false
+    this.turn = HUMAN
+    this.clearCells()
+    if (this.isDuo) {
+      this.statusText = '双人模式 · X 先手'
+      this.turnText = '轮到 X 方落子'
+      this.bMenuLabel = '换模式'
+      this.bBackLabel = '换个模式'
+    } else {
+      this.statusText = '你执 X · ' + LEVEL_NAME[this.level] + '难度'
+      this.turnText = '你的回合'
+      this.bMenuLabel = '换难度'
+      this.bBackLabel = '换个难度'
+    }
+  },
+
+  clearCells() {
+    const k = ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8']
+    for (let i = 0; i < 9; i++) {
+      this[k[i] + 'x'] = false
+      this[k[i] + 'o'] = false
+      this[k[i] + 'w'] = false
+    }
+  },
+
+  paintCells() {
+    const b = this.board
+    const line = winLineOf(b)
+    const k = ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8']
+    for (let i = 0; i < 9; i++) {
+      this[k[i] + 'x'] = b[i] === HUMAN
+      this[k[i] + 'o'] = b[i] === AI
+      let hl = false
+      if (line) {
+        for (let j = 0; j < 3; j++) if (line[j] === i) hl = true
+      }
+      this[k[i] + 'w'] = hl
+    }
+  },
+
+  onCell0() { this.playAt(0) },
+  onCell1() { this.playAt(1) },
+  onCell2() { this.playAt(2) },
+  onCell3() { this.playAt(3) },
+  onCell4() { this.playAt(4) },
+  onCell5() { this.playAt(5) },
+  onCell6() { this.playAt(6) },
+  onCell7() { this.playAt(7) },
+  onCell8() { this.playAt(8) },
+
+  /**
+   * 落子。两种模式的差别只在这里：
+   *  · 人机：固定由 HUMAN 落，之后交给 aiTurn()；
+   *  · 双人：由 this.turn（HUMAN=先手X / AI=后手O）落，之后把 turn 翻到 3-turn 交给同桌。
+   * settle() 判终局对两种模式是同一套（winnerOf 返回 1/2 就是 X/O 胜），
+   * 分歧只在 finish() 的文案。
+   */
+  playAt(n) {
+    if (!this.gameShow || this.overShow || this.busy) return
+    const who = this.isDuo ? this.turn : HUMAN
+    const next = play(this.board, n, who)
+    if (!next) return
+    this.board = next
+    this.paintCells()
+    if (this.settle()) return
+    if (this.isDuo) {
+      this.turn = 3 - this.turn
+      this.turnText = this.turn === HUMAN ? '轮到 X 方落子' : '轮到 O 方落子'
+    } else {
+      this.aiTurn()
+    }
+  },
+
+  aiTurn() {
+    this.busy = true
+    this.turnText = '对手思考中'
+    const b = this.board
+    const mv = aiPick(b, this.level)
+    if (mv < 0) { this.busy = false; return }
+    const after = play(b, mv, AI)
+    if (!after) { this.busy = false; return }
+    this.board = after
+    this.paintCells()
+    this.busy = false
+    if (!this.settle()) this.turnText = '你的回合'
+  },
+
+  settle() {
+    const w = winnerOf(this.board)
+    if (w === HUMAN) { this.finish('win'); return true }
+    if (w === AI) { this.finish('lose'); return true }
+    if (isFull(this.board)) { this.finish('draw'); return true }
+    return false
+  },
+
+  /**
+   * 结算。
+   * ⚠️ kind 是「谁赢」的中立表述：'win'=HUMAN 三连、'lose'=AI 三连、'draw'=满盘。
+   *    人机模式翻译成「你赢了/电脑胜」；双人模式翻译成「X 方胜/O 方胜」。
+   * ⚠️ 双人模式**不写战绩**（record）——同桌两人的胜负不该计入个人战绩。
+   */
+  finish(kind) {
+    if (!this.isDuo) {
+      try { record(kind) } catch (e) {}
+    }
+    this.overShow = true
+    this.turnText = ''
+    if (this.isDuo) {
+      if (kind === 'win') {
+        this.overTitle = 'X 方胜'
+        this.overSub = '连成三子 · 先手拿下'
+      } else if (kind === 'lose') {
+        this.overTitle = 'O 方胜'
+        this.overSub = '连成三子 · 后手反超'
+      } else {
+        this.overTitle = '平局'
+        this.overSub = '棋盘已满 · 势均力敌'
+      }
+    } else {
+      if (kind === 'win') {
+        this.overTitle = '你赢了'
+        this.overSub = '连成三子 · 干得漂亮'
+      } else if (kind === 'lose') {
+        this.overTitle = '电脑胜'
+        this.overSub = '被将住了 · 再来一盘'
+      } else {
+        this.overTitle = '平局'
+        this.overSub = '棋盘已满 · 都没破防'
+      }
+    }
+    this.syncStatUi()
+  },
+
+  onAgain() {
+    this.newRound()
+  }
+}
+</script>
+
+<template>
+  <div class="page" style="height:{{pageH}}px">
+
+    <!-- 🔴 三态容器：<scroll> 一律不带 show/if，改用外层 <div if> 切换。
+         依据：gudao 13 个真机跑通页面统计，if 只出现在 <div>（15 处，可带子节点），
+         <scroll> 从不用 show/if（0 处）；show 只出现在 text/input 等叶子元素。
+         越界写法（<scroll show>）在编译期就报 parseDomElement "no type"。 -->
+    <!-- ================= 菜单 ================= -->
+    <div class="page-wrap" if="{{menuShow}}">
+      <scroll class="sc-menu" scroll-y="true" style="height:{{pageH}}px">
+      <div class="col-center">
+
+        <text class="text-[34px] text-cream text-center mt-[10px]">井字棋</text>
+        <text class="text-[14px] text-dim text-center h-[18px] mt-[2px]">三子连线 · 先手执 X</text>
+
+        <text class="text-[15px] text-cyan text-center h-[20px] mt-[12px]">选择模式</text>
+
+        <!-- 两个模式按钮：2×130 + 间隔，整体 292 宽居中（结构与难度按钮同构） -->
+        <div class="row-mode mt-[6px]">
+          <div class="col-mode">
+            <input class="btn-mode" type="button" value="人机对战" onclick="onPickMode0" />
+            <div class="ring-mode" if="{{mring0}}"></div>
+          </div>
+          <div class="col-mode">
+            <input class="btn-mode" type="button" value="双人模式" onclick="onPickMode1" />
+            <div class="ring-mode" if="{{mring1}}"></div>
+          </div>
+        </div>
+
+        <!-- 人机对战：难度区（与双人说明区互斥）。
+             注意这里只能是 <div if>，<div show> 会在编译期报 no type（见脚本 ④）。 -->
+        <div class="sub-block" if="{{isSolo}}">
+          <text class="text-[15px] text-cyan text-center h-[20px] mt-[12px]">选择难度</text>
+
+          <!-- 三个难度按钮：3×92 + 间隔，整体 292 宽居中 -->
+          <div class="row-diff mt-[6px]">
+            <div class="col-diff">
+              <input class="btn-diff" type="button" value="简单" onclick="onPick0" />
+              <div class="ring-diff" if="{{ring0}}"></div>
+            </div>
+            <div class="col-diff">
+              <input class="btn-diff" type="button" value="普通" onclick="onPick1" />
+              <div class="ring-diff" if="{{ring1}}"></div>
+            </div>
+            <div class="col-diff">
+              <input class="btn-diff" type="button" value="困难" onclick="onPick2" />
+              <div class="ring-diff" if="{{ring2}}"></div>
+            </div>
+          </div>
+
+          <!-- 说明卡 -->
+          <div class="w-[300px] flex flex-col items-center rounded-[14px] px-[10px] py-[8px] mt-[12px] border-[1px] border-line">
+            <text class="text-[13px] text-dim text-center h-[18px]">简单 · 随手棋，入门练手</text>
+            <text class="text-[13px] text-dim text-center h-[18px]">普通 · 会堵线，偶尔露破绽</text>
+            <text class="text-[13px] text-dim text-center h-[18px]">困难 · 算尽每一步，几乎不输</text>
+          </div>
+        </div>
+
+        <!-- 双人模式：说明卡（与难度区互斥） -->
+        <div class="sub-block" if="{{isDuo}}">
+          <div class="w-[300px] flex flex-col items-center rounded-[14px] px-[10px] py-[8px] mt-[12px] border-[1px] border-line">
+            <text class="text-[13px] text-dim text-center h-[18px]">同桌轮流落子 · 一人 X 一人 O</text>
+            <text class="text-[13px] text-dim text-center h-[18px]">X 先手 · 先连成三子者获胜</text>
+            <text class="text-[13px] text-dim text-center h-[18px]">无电脑参与 · 面对面对弈</text>
+          </div>
+        </div>
+
+        <text class="text-[14px] text-cyan text-center h-[20px] mt-[10px]">{{statText}}</text>
+
+        <input class="w-[220px] h-[44px] rounded-[22px] text-[20px] text-ink mt-[12px] bg-gold" type="button" value="{{bStartLabel}}" onclick="onStart" />
+      </div>
+      </scroll>
+    </div>
+
+    <!-- ================= 对局 ================= -->
+    <div class="page-wrap" if="{{gameShow}}">
+      <scroll class="sc-menu" scroll-y="true" style="height:{{pageH}}px">
+      <div class="col-center">
+
+        <text class="text-[18px] text-cream text-center h-[24px] mt-[8px]">{{statusText}}</text>
+        <text class="text-[14px] text-cyan text-center h-[18px]">{{turnText}}</text>
+
+        <!-- 棋盘：3×3，每格 68 + 左右 margin 4 ⇒ 一行占 3×68+3×8 = 228 ≤ 232 可用宽 -->
+        <div class="w-[252px] h-[252px] flex flex-col rounded-[20px] mt-[10px] px-[10px] py-[10px] bg-board border-[2px] border-line">
+          <div class="row-cell">
+            <div class="cell" onclick="onCell0">
+              <text class="mark-x" show="{{c0x}}">X</text>
+              <text class="mark-o" show="{{c0o}}">O</text>
+              <div class="mark-win" if="{{c0w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell1">
+              <text class="mark-x" show="{{c1x}}">X</text>
+              <text class="mark-o" show="{{c1o}}">O</text>
+              <div class="mark-win" if="{{c1w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell2">
+              <text class="mark-x" show="{{c2x}}">X</text>
+              <text class="mark-o" show="{{c2o}}">O</text>
+              <div class="mark-win" if="{{c2w}}"></div>
+            </div>
+          </div>
+          <div class="row-cell">
+            <div class="cell" onclick="onCell3">
+              <text class="mark-x" show="{{c3x}}">X</text>
+              <text class="mark-o" show="{{c3o}}">O</text>
+              <div class="mark-win" if="{{c3w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell4">
+              <text class="mark-x" show="{{c4x}}">X</text>
+              <text class="mark-o" show="{{c4o}}">O</text>
+              <div class="mark-win" if="{{c4w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell5">
+              <text class="mark-x" show="{{c5x}}">X</text>
+              <text class="mark-o" show="{{c5o}}">O</text>
+              <div class="mark-win" if="{{c5w}}"></div>
+            </div>
+          </div>
+          <div class="row-cell">
+            <div class="cell" onclick="onCell6">
+              <text class="mark-x" show="{{c6x}}">X</text>
+              <text class="mark-o" show="{{c6o}}">O</text>
+              <div class="mark-win" if="{{c6w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell7">
+              <text class="mark-x" show="{{c7x}}">X</text>
+              <text class="mark-o" show="{{c7o}}">O</text>
+              <div class="mark-win" if="{{c7w}}"></div>
+            </div>
+            <div class="cell" onclick="onCell8">
+              <text class="mark-x" show="{{c8x}}">X</text>
+              <text class="mark-o" show="{{c8o}}">O</text>
+              <div class="mark-win" if="{{c8w}}"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row-btm mt-[12px]">
+          <input class="btn-sub" type="button" value="{{bRetryLabel}}" onclick="onAgain" />
+          <input class="btn-sub" type="button" value="{{bMenuLabel}}" onclick="onBack" />
+        </div>
+      </div>
+      </scroll>
+    </div>
+
+    <!-- ================= 结算 ================= -->
+    <div class="page-wrap" if="{{overShow}}">
+      <scroll class="sc-menu" scroll-y="true" style="height:{{pageH}}px">
+      <div class="col-center">
+        <div class="w-[300px] flex flex-col items-center rounded-[20px] px-[12px] py-[16px] mt-[40px] bg-board border-[2px] border-line">
+          <text class="text-[28px] text-gold text-center h-[36px]">{{overTitle}}</text>
+          <text class="text-[14px] text-dim text-center h-[20px] mt-[4px]">{{overSub}}</text>
+          <input class="w-[240px] h-[44px] rounded-[22px] text-[19px] text-ink mt-[14px] bg-gold" type="button" value="{{bAgainLabel}}" onclick="onAgain" />
+          <input class="w-[240px] h-[44px] rounded-[22px] text-[17px] text-soft mt-[8px] bg-sub" type="button" value="{{bBackLabel}}" onclick="onBack" />
+        </div>
+      </div>
+      </scroll>
+    </div>
+
+  </div>
+</template>
+
+<style>
+  @tailwind components;
+  @tailwind utilities;
+
+  /* ---- 页面骨架 ---- */
+  .page {
+    width: 100%;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    background-color: #0E1524;
+  }
+  /* 长方形屏（GT 390×450）：纯 CSS 覆盖，不依赖 deviceInfo */
+  @media screen and (device: watch-square) {
+    .page { height: 538px; }
+  }
+
+  /* 三态容器：<scroll> 不支持 show/if，用外层 <div if> 切换 */
+  .page-wrap { width: 100%; flex-direction: column; align-items: center; }
+  /* 滚动容器 + 纵向居中列 */
+  .sc-menu { width: 100%; flex-direction: column; align-items: center; }
+  .col-center { width: 100%; flex-direction: column; align-items: center; }
+  /* 互斥子区块（难度区 / 双人说明区）：保持与 .col-center 一致的居中流式布局 */
+  .sub-block { width: 100%; flex-direction: column; align-items: center; }
+
+  /* ---- 配色：自建 class，不依赖 tailwind 主题，主题没加载也不会丢色 ---- */
+  .bg-board { background-color: #1B2740; }
+  .bg-gold { background-color: #F5C15E; }
+  .bg-sub { background-color: #24334F; }
+  .border-line { border-color: #2E3E60; }
+  .text-cream { color: #F5F0E1; }
+  .text-ink { color: #1A1408; }
+  .text-soft { color: #C6D2E6; }
+  .text-dim { color: #7C8BA8; }
+  .text-cyan { color: #5BC8F5; }
+  .text-gold { color: #F5C15E; }
+
+  /* ---- 模式按钮行（2 个 130 宽，与难度行同构）---- */
+  .row-mode { width: 292px; flex-direction: row; align-items: center; justify-content: center; }
+  .col-mode { width: 130px; height: 44px; margin-left: 4px; margin-right: 4px; align-items: center; justify-content: center; }
+  .btn-mode { width: 130px; height: 44px; border-radius: 22px; font-size: 17px; color: #AEBBD4; background-color: #1B2740; }
+  .ring-mode { width: 130px; height: 44px; border-radius: 22px; border-width: 2px; border-color: #F5C15E; }
+
+  /* ---- 难度按钮行 ---- */
+  .row-diff { width: 292px; flex-direction: row; align-items: center; justify-content: center; }
+  .col-diff { width: 92px; height: 44px; margin-left: 4px; margin-right: 4px; align-items: center; justify-content: center; }
+  .btn-diff { width: 92px; height: 44px; border-radius: 22px; font-size: 19px; color: #AEBBD4; background-color: #1B2740; }
+  .ring-diff { width: 92px; height: 44px; border-radius: 22px; border-width: 2px; border-color: #F5C15E; }
+
+  /* ---- 棋盘 ---- */
+  /* 🔴 宽度账：.cell 左右各有 margin 4px，一行三格真实占 3×W + 3×8 = 3W+24。
+     棋盘 252 - padding 10×2 = 232 可用宽 ⇒ W 必须 ≤ (232-24)/3 = 69.3。
+     取 68 ⇒ 占 228，居中不溢出。之前写 72 ⇒ 占 240，超出 8px，第三列被挤出面板。 */
+  .row-cell { width: 232px; flex-direction: row; align-items: center; justify-content: center; }
+  .cell {
+    width: 68px;
+    height: 68px;
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    border-radius: 14px;
+    background-color: #22304E;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 棋子：X 琥珀金、O 青蓝（ASCII 字形，避开 watch 字体缺符号） */
+  .mark-x { width: 68px; height: 68px; font-size: 38px; color: #F5C15E; text-align: center; }
+  .mark-o { width: 68px; height: 68px; font-size: 38px; color: #5BC8F5; text-align: center; }
+  /* 胜利高亮：金环叠加，不遮挡棋子 */
+  .mark-win { width: 68px; height: 68px; border-radius: 14px; border-width: 3px; border-color: #F5C15E; }
+
+  /* ---- 底部按钮行 ---- */
+  .row-btm { width: 260px; flex-direction: row; align-items: center; justify-content: center; }
+  .btn-sub { width: 124px; height: 44px; margin-left: 3px; margin-right: 3px; border-radius: 22px; font-size: 18px; color: #C6D2E6; background-color: #24334F; }
+</style>

@@ -1,0 +1,24 @@
+# 🔴 签名证书目录：含私钥 private.pem，绝对不能进仓库
+#    （误提交会被 GitHub 的密钥扫描告警，且任何人都能冒用你的开发者身份签名）
+sign/
+
+# 依赖
+node_modules/
+
+# 编译 / 打包产物（rpk 走 GitHub Release 分发，不入库）
+build/
+dist/
+
+# 编辑器与工具状态
+.ide/
+.workbuddy/
+.preview.json
+
+# 运行日志
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
